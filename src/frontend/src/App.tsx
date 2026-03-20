@@ -7,20 +7,36 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   ChevronLeft,
   ChevronRight,
+  Clapperboard,
+  Download,
   Film,
   Image,
+  Menu,
   MessageSquare,
   Music,
   Plus,
   Send,
   Settings,
+  Share2,
   Sparkles,
   Star,
   Trophy,
+  Wand2,
   X,
   Zap,
 } from "lucide-react";
@@ -36,12 +52,28 @@ interface Attachment {
   name: string;
 }
 
+interface ProgressCard {
+  type: "progress";
+  steps: string[];
+  currentStep: number;
+  progress: number;
+  isMovie?: boolean;
+  duration?: number;
+}
+
+interface ResultCard {
+  type: "result";
+  text: string;
+}
+
 interface Message {
   id: string;
   role: MessageRole;
   content: string;
   attachments?: Attachment[];
   timestamp: Date;
+  progressCard?: ProgressCard;
+  resultCard?: ResultCard;
 }
 
 interface ChatSession {
@@ -171,8 +203,8 @@ function generateAIResponse(
 }
 
 // ── Confetti ─────────────────────────────────────────────────────────────
-function spawnConfetti() {
-  const colors = [
+function spawnConfetti(colors?: string[]) {
+  const defaultColors = [
     "#FFD700",
     "#FF6D00",
     "#1565C0",
@@ -180,12 +212,13 @@ function spawnConfetti() {
     "#00E676",
     "#E040FB",
   ];
+  const palette = colors ?? defaultColors;
   for (let i = 0; i < 80; i++) {
     const el = document.createElement("div");
     el.className = "confetti-particle";
     el.style.left = `${Math.random() * 100}vw`;
     el.style.top = "-20px";
-    el.style.background = colors[Math.floor(Math.random() * colors.length)];
+    el.style.background = palette[Math.floor(Math.random() * palette.length)];
     el.style.animationDuration = `${1.5 + Math.random() * 2}s`;
     el.style.animationDelay = `${Math.random() * 0.8}s`;
     el.style.width = `${6 + Math.random() * 8}px`;
@@ -220,9 +253,65 @@ const SAMPLE_SESSIONS: ChatSession[] = [
   },
 ];
 
+// ── Progress simulation ───────────────────────────────────────────────────
+const EDIT_STEPS = [
+  "Analyzing media...",
+  "Applying anime style effects...",
+  "Rendering final output...",
+  "Complete! ✓",
+];
+
+function getMovieSteps(duration: number): string[] {
+  return [
+    "Initializing movie renderer...",
+    "Building scene sequences...",
+    "Rendering frames...",
+    `Encoding ${duration}min movie...`,
+    "Movie ready! 🎬",
+  ];
+}
+
+// ── localStorage helpers ─────────────────────────────────────────────────
+const LS_KEY = "ogfb_sessions";
+
+function loadSessionsFromStorage(): ChatSession[] {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return SAMPLE_SESSIONS;
+    const parsed = JSON.parse(raw) as Array<{
+      id: string;
+      title: string;
+      lastMessage: string;
+      timestamp: string;
+      messages: Array<{
+        id: string;
+        role: MessageRole;
+        content: string;
+        attachments?: Attachment[];
+        timestamp: string;
+        progressCard?: ProgressCard;
+        resultCard?: ResultCard;
+      }>;
+    }>;
+    return parsed.map((s) => ({
+      ...s,
+      timestamp: new Date(s.timestamp),
+      messages: s.messages.map((m) => ({
+        ...m,
+        timestamp: new Date(m.timestamp),
+      })),
+    }));
+  } catch {
+    return SAMPLE_SESSIONS;
+  }
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────
 export default function App() {
-  const [sessions, setSessions] = useState<ChatSession[]>(SAMPLE_SESSIONS);
+  const isMobile = useIsMobile();
+  const [sessions, setSessions] = useState<ChatSession[]>(() =>
+    loadSessionsFromStorage(),
+  );
   const [activeSessionId, setActiveSessionId] = useState<string>("new");
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
@@ -232,6 +321,11 @@ export default function App() {
   const [cheatCode, setCheatCode] = useState("");
   const [cheatError, setCheatError] = useState(false);
   const [ogMode, setOgMode] = useState(false);
+  const [movieMode, setMovieMode] = useState(false);
+  const [movieDialogOpen, setMovieDialogOpen] = useState(false);
+  const [movieStyle, setMovieStyle] = useState(ANIME_PRESETS[0].name);
+  const [movieDuration, setMovieDuration] = useState(30);
+  const [movieStory, setMovieStory] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>(
     [],
   );
@@ -241,16 +335,34 @@ export default function App() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const cheatInputRef = useRef<HTMLInputElement>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: messagesEndRef is a stable ref
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messagesEndRef is stable
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  // Persist sessions to localStorage (cap at 20)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional JSON sync
+  useEffect(() => {
+    const toStore = sessions.slice(0, 20);
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(toStore));
+    } catch {
+      // storage full — ignore
+    }
+  }, [JSON.stringify(sessions)]);
+
+  // Close sidebar on mobile when changing to desktop
+  useEffect(() => {
+    if (!isMobile) return;
+    setSidebarOpen(false);
+  }, [isMobile]);
 
   function handleNewChat() {
     setActiveSessionId("new");
     setMessages([]);
     setPendingAttachments([]);
     setInputText("");
+    if (isMobile) setSidebarOpen(false);
   }
 
   function handleFileUpload(
@@ -266,6 +378,70 @@ export default function App() {
 
   function removeAttachment(index: number) {
     setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // ── Multi-step progress simulation ────────────────────────────────────
+  function runProgressSimulation(
+    progressMsgId: string,
+    steps: string[],
+    finalText: string,
+    isMovie = false,
+    duration = 0,
+  ) {
+    const totalMs = isMovie ? 4000 : 2500;
+    const stepInterval = totalMs / steps.length;
+    let stepIdx = 0;
+    let prog = 0;
+    const progPerTick = 100 / (totalMs / 60);
+
+    const tick = setInterval(() => {
+      prog = Math.min(100, prog + progPerTick);
+      const newStepIdx = Math.min(
+        steps.length - 1,
+        Math.floor((prog / 100) * steps.length),
+      );
+      if (newStepIdx !== stepIdx) stepIdx = newStepIdx;
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === progressMsgId
+            ? {
+                ...m,
+                progressCard: {
+                  type: "progress",
+                  steps,
+                  currentStep: stepIdx,
+                  progress: Math.round(prog),
+                  isMovie,
+                  duration,
+                },
+              }
+            : m,
+        ),
+      );
+
+      if (prog >= 100) {
+        clearInterval(tick);
+        setTimeout(() => {
+          // Replace progress card with result card
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === progressMsgId
+                ? {
+                    ...m,
+                    content: "",
+                    progressCard: undefined,
+                    resultCard: { type: "result", text: finalText },
+                  }
+                : m,
+            ),
+          );
+        }, 600);
+      }
+    }, 60);
+
+    // Suppress unused variable warning — stepInterval used conceptually
+    void stepInterval;
   }
 
   async function handleSend() {
@@ -285,7 +461,6 @@ export default function App() {
     setPendingAttachments([]);
     setIsTyping(true);
 
-    // Save or create session
     const title =
       inputText.trim().slice(0, 40) || `${pendingAttachments[0]?.type} edit`;
     if (activeSessionId === "new") {
@@ -296,24 +471,89 @@ export default function App() {
         timestamp: new Date(),
         messages: newMessages,
       };
-      setSessions((prev) => [newSession, ...prev]);
+      setSessions((prev) => [newSession, ...prev].slice(0, 20));
       setActiveSessionId(newSession.id);
+    } else {
+      // Update existing session messages
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeSessionId
+            ? {
+                ...s,
+                messages: newMessages,
+                lastMessage:
+                  userMsg.content || `${pendingAttachments[0]?.type} upload`,
+              }
+            : s,
+        ),
+      );
     }
 
-    // Simulate AI delay
-    const delay = 1200 + Math.random() * 1000;
-    await new Promise((r) => setTimeout(r, delay));
+    // Show typing for 800ms then switch to progress card
+    await new Promise((r) => setTimeout(r, 800));
+    setIsTyping(false);
 
     const aiResponse = generateAIResponse(userMsg.content, userMsg.attachments);
-    const aiMsg: Message = {
-      id: (Date.now() + 1).toString(),
+    const progressMsgId = (Date.now() + 1).toString();
+    const progressMsg: Message = {
+      id: progressMsgId,
       role: "assistant",
-      content: aiResponse,
+      content: "",
+      timestamp: new Date(),
+      progressCard: {
+        type: "progress",
+        steps: EDIT_STEPS,
+        currentStep: 0,
+        progress: 0,
+      },
+    };
+
+    setMessages((prev) => [...prev, progressMsg]);
+    runProgressSimulation(progressMsgId, EDIT_STEPS, aiResponse);
+  }
+
+  function handleMovieGenerate() {
+    setMovieDialogOpen(false);
+    const movieSteps = getMovieSteps(movieDuration);
+    const finalText = `🎬 **Movie Generation Complete!**\n\nYour **${movieDuration}-minute ${movieStyle}** cinematic anime movie has been rendered!\n\n• **Style:** ${movieStyle}\n• **Duration:** ${movieDuration} minutes\n• **Resolution:** 4K Cinematic\n• **Frames rendered:** ${(movieDuration * 60 * 24).toLocaleString()} frames\n• **Story:** ${movieStory || "Epic anime adventure"}\n\nYour movie is ready to download! This is a MOVIE MODE exclusive feature. 🍿`;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: `🎬 Generate ${movieDuration}min ${movieStyle} movie: ${movieStory || "Epic anime adventure"}`,
       timestamp: new Date(),
     };
 
-    setIsTyping(false);
-    setMessages((prev) => [...prev, aiMsg]);
+    setMessages((prev) => [...prev, userMsg]);
+
+    const progressMsgId = (Date.now() + 1).toString();
+    const progressMsg: Message = {
+      id: progressMsgId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+      progressCard: {
+        type: "progress",
+        steps: movieSteps,
+        currentStep: 0,
+        progress: 0,
+        isMovie: true,
+        duration: movieDuration,
+      },
+    };
+
+    setTimeout(() => {
+      setMessages((prev) => [...prev, progressMsg]);
+      runProgressSimulation(
+        progressMsgId,
+        movieSteps,
+        finalText,
+        true,
+        movieDuration,
+      );
+    }, 400);
+
+    setMovieStory("");
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -329,7 +569,6 @@ export default function App() {
       setCheatModalOpen(false);
       setCheatCode("");
       spawnConfetti();
-      // Add OG mode activation message
       const ogMsg: Message = {
         id: Date.now().toString(),
         role: "assistant",
@@ -338,6 +577,26 @@ export default function App() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, ogMsg]);
+    } else if (cheatCode === "MOVIEDANCE103") {
+      setMovieMode(true);
+      setCheatModalOpen(false);
+      setCheatCode("");
+      spawnConfetti([
+        "#7C3AED",
+        "#A855F7",
+        "#C084FC",
+        "#EC4899",
+        "#06B6D4",
+        "#fff",
+      ]);
+      const movieMsg: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content:
+          "🎬 **MOVIE MODE UNLOCKED!** You now have access to generate up to 2-hour real graphical movies! Use the 🎬 Generate Movie button to create cinematic anime movies from your media.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, movieMsg]);
     } else {
       setCheatError(true);
       setTimeout(() => setCheatError(false), 600);
@@ -351,6 +610,15 @@ export default function App() {
   const currentPresets = ogMode
     ? [...ANIME_PRESETS, ...OG_ANIME_PRESETS]
     : ANIME_PRESETS;
+
+  // Sync messages to active session whenever messages change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
+  useEffect(() => {
+    if (activeSessionId === "new" || messages.length === 0) return;
+    setSessions((prev) =>
+      prev.map((s) => (s.id === activeSessionId ? { ...s, messages } : s)),
+    );
+  }, [JSON.stringify(messages), activeSessionId]);
 
   // Format message content with markdown-lite
   function formatContent(text: string) {
@@ -372,11 +640,29 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-[100dvh] overflow-hidden bg-background">
+      {/* ── Mobile overlay backdrop ── */}
+      {isMobile && sidebarOpen && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+          onClick={() => setSidebarOpen(false)}
+          onKeyDown={(e) => e.key === "Escape" && setSidebarOpen(false)}
+        />
+      )}
+
       {/* ── Sidebar ── */}
       <aside
         className={`flex flex-col transition-all duration-300 ease-in-out border-r border-border
-          ${sidebarOpen ? "w-64" : "w-0 overflow-hidden"}
+          ${
+            isMobile
+              ? `fixed inset-y-0 left-0 z-50 w-72 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
+              : sidebarOpen
+                ? "w-64"
+                : "w-0 overflow-hidden"
+          }
         `}
         style={{ background: "oklch(0.14 0.01 265)" }}
       >
@@ -415,7 +701,9 @@ export default function App() {
             style={{
               background: ogMode
                 ? "linear-gradient(135deg, oklch(0.87 0.17 95), oklch(0.68 0.22 50))"
-                : "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.44 0.17 254))",
+                : movieMode
+                  ? "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))"
+                  : "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.44 0.17 254))",
               border: "none",
               color: "#fff",
             }}
@@ -439,6 +727,7 @@ export default function App() {
                 onClick={() => {
                   setActiveSessionId(session.id);
                   setMessages(session.messages);
+                  if (isMobile) setSidebarOpen(false);
                 }}
                 className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors group ${
                   activeSessionId === session.id
@@ -485,6 +774,43 @@ export default function App() {
               </Badge>
             </div>
           )}
+          {movieMode && (
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.48 0.22 300 / 20%), oklch(0.62 0.20 300 / 20%))",
+                border: "1px solid oklch(0.55 0.22 300 / 40%)",
+                boxShadow: "0 0 12px oklch(0.55 0.22 300 / 25%)",
+              }}
+            >
+              <Clapperboard
+                className="w-4 h-4 flex-shrink-0"
+                style={{ color: "oklch(0.75 0.18 300)" }}
+              />
+              <span
+                className="text-xs font-bold"
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.75 0.18 300), oklch(0.85 0.14 320))",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                }}
+              >
+                MOVIE MODE ACTIVE
+              </span>
+              <Badge
+                className="ml-auto text-xs px-1 py-0"
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))",
+                  color: "#fff",
+                }}
+              >
+                🎬
+              </Badge>
+            </div>
+          )}
           <Button
             data-ocid="cheatcode.open_modal_button"
             variant="ghost"
@@ -517,6 +843,7 @@ export default function App() {
               <p className="text-xs font-semibold truncate">
                 OG User
                 {ogMode && <span className="ml-1 text-yellow-400">👑</span>}
+                {movieMode && <span className="ml-1">🎬</span>}
               </p>
               <p className="text-xs text-muted-foreground">Anime Editor</p>
             </div>
@@ -525,17 +852,18 @@ export default function App() {
       </aside>
 
       {/* ── Main Content ── */}
-      <main className="flex flex-col flex-1 min-w-0 h-screen">
+      <main className="flex flex-col flex-1 min-w-0 h-[100dvh] min-w-0">
         {/* Header */}
         <header
           className="flex items-center gap-3 px-4 py-3 border-b border-border flex-shrink-0"
           style={{ background: "oklch(0.13 0.005 265)" }}
         >
+          {/* Desktop chevron toggle */}
           <button
             type="button"
             data-ocid="sidebar.toggle"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/20 transition-colors"
+            className={`p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/20 transition-colors ${isMobile ? "hidden" : ""}`}
           >
             {sidebarOpen ? (
               <ChevronLeft className="w-5 h-5" />
@@ -543,6 +871,17 @@ export default function App() {
               <ChevronRight className="w-5 h-5" />
             )}
           </button>
+          {/* Mobile hamburger */}
+          {isMobile && (
+            <button
+              type="button"
+              data-ocid="sidebar.toggle"
+              onClick={() => setSidebarOpen((v) => !v)}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/20 transition-colors"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
 
           <div className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0">
             <img
@@ -576,6 +915,18 @@ export default function App() {
               👑 OG MODE
             </Badge>
           )}
+          {movieMode && (
+            <Badge
+              className="font-bold text-xs"
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))",
+                color: "#fff",
+              }}
+            >
+              🎬 MOVIE MODE
+            </Badge>
+          )}
 
           <div
             className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs"
@@ -591,7 +942,7 @@ export default function App() {
 
         {/* Messages area */}
         <ScrollArea className="flex-1 min-h-0">
-          <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+          <div className="max-w-3xl mx-auto px-2 md:px-4 py-4 md:py-6 space-y-6">
             {messages.length === 0 ? (
               /* Welcome / preset area */
               <div className="fade-in-up">
@@ -615,6 +966,20 @@ export default function App() {
                     The ultimate AI-powered anime edit studio. Transform your
                     photos, videos, and audio into epic anime content.
                   </p>
+                  {movieMode && (
+                    <div
+                      className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-full text-sm font-semibold"
+                      style={{
+                        background:
+                          "linear-gradient(135deg, oklch(0.48 0.22 300 / 20%), oklch(0.62 0.20 300 / 20%))",
+                        border: "1px solid oklch(0.55 0.22 300 / 40%)",
+                        color: "oklch(0.80 0.16 300)",
+                      }}
+                    >
+                      <Clapperboard className="w-4 h-4" />
+                      Movie Mode Active — Up to 2-hour cinematic generation
+                    </div>
+                  )}
                 </div>
 
                 {/* Prompt suggestions */}
@@ -750,7 +1115,7 @@ export default function App() {
 
                   {/* Bubble */}
                   <div
-                    className={`max-w-[75%] space-y-2 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}
+                    className={`max-w-[85%] md:max-w-[75%] space-y-2 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}
                   >
                     {/* Attachments */}
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -798,8 +1163,182 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Text */}
-                    {msg.content && (
+                    {/* Progress card */}
+                    {msg.progressCard && (
+                      <div
+                        className="w-80 rounded-2xl p-4 space-y-3"
+                        style={{
+                          background: msg.progressCard.isMovie
+                            ? "linear-gradient(135deg, oklch(0.18 0.03 300), oklch(0.20 0.02 265))"
+                            : "oklch(0.18 0.015 265)",
+                          borderRadius: "1rem 1rem 1rem 0.25rem",
+                          border: msg.progressCard.isMovie
+                            ? "1px solid oklch(0.55 0.22 300 / 30%)"
+                            : "1px solid oklch(0.25 0.01 265)",
+                        }}
+                        data-ocid="chat.loading_state"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-6 h-6 rounded-full flex items-center justify-center animate-spin"
+                            style={{
+                              background: msg.progressCard.isMovie
+                                ? "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))"
+                                : "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.44 0.17 254))",
+                            }}
+                          >
+                            <div className="w-3 h-3 rounded-full bg-background" />
+                          </div>
+                          <span className="text-sm font-semibold">
+                            {msg.progressCard.isMovie
+                              ? "🎬 Generating Movie..."
+                              : "🔄 Processing your request..."}
+                          </span>
+                        </div>
+
+                        <Progress
+                          value={msg.progressCard.progress}
+                          className="h-2"
+                          style={{
+                            background: "oklch(0.25 0.01 265)",
+                          }}
+                        />
+
+                        <div className="flex items-center justify-between text-xs">
+                          <span
+                            className="font-medium"
+                            style={{
+                              color: msg.progressCard.isMovie
+                                ? "oklch(0.75 0.18 300)"
+                                : "oklch(0.68 0.22 50)",
+                            }}
+                          >
+                            {
+                              msg.progressCard.steps[
+                                msg.progressCard.currentStep
+                              ]
+                            }
+                          </span>
+                          <span className="text-muted-foreground font-mono">
+                            {msg.progressCard.progress}%
+                          </span>
+                        </div>
+
+                        <div className="space-y-1">
+                          {msg.progressCard.steps.map((step, si) => (
+                            <div
+                              key={step}
+                              className="flex items-center gap-2 text-xs"
+                            >
+                              <div
+                                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                style={{
+                                  background:
+                                    si < msg.progressCard!.currentStep
+                                      ? "oklch(0.62 0.20 150)"
+                                      : si === msg.progressCard!.currentStep
+                                        ? msg.progressCard!.isMovie
+                                          ? "oklch(0.75 0.18 300)"
+                                          : "oklch(0.68 0.22 50)"
+                                        : "oklch(0.35 0.01 265)",
+                                }}
+                              />
+                              <span
+                                style={{
+                                  color:
+                                    si < msg.progressCard!.currentStep
+                                      ? "oklch(0.62 0.20 150)"
+                                      : si === msg.progressCard!.currentStep
+                                        ? "oklch(0.90 0 0)"
+                                        : "oklch(0.45 0 0)",
+                                }}
+                              >
+                                {si < msg.progressCard!.currentStep
+                                  ? `✓ ${step}`
+                                  : step}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Result card */}
+                    {msg.resultCard && (
+                      <div
+                        className="w-full max-w-md rounded-2xl overflow-hidden"
+                        style={{
+                          background: "oklch(0.18 0.015 265)",
+                          borderRadius: "1rem 1rem 1rem 0.25rem",
+                          border: "1px solid oklch(0.30 0.04 150 / 60%)",
+                        }}
+                        data-ocid="chat.success_state"
+                      >
+                        <div
+                          className="flex items-center gap-2 px-4 py-2.5"
+                          style={{
+                            background:
+                              "linear-gradient(135deg, oklch(0.28 0.08 150 / 40%), oklch(0.20 0.04 150 / 30%))",
+                            borderBottom:
+                              "1px solid oklch(0.30 0.04 150 / 40%)",
+                          }}
+                        >
+                          <span className="text-base">✅</span>
+                          <span
+                            className="text-sm font-bold"
+                            style={{ color: "oklch(0.72 0.18 150)" }}
+                          >
+                            Generation Complete
+                          </span>
+                        </div>
+                        <div
+                          className="px-4 py-3 text-sm leading-relaxed"
+                          style={{ color: "oklch(0.97 0 0)" }}
+                        >
+                          {formatContent(msg.resultCard.text)}
+                        </div>
+                        <div
+                          className="flex items-center gap-2 px-4 py-3"
+                          style={{
+                            borderTop: "1px solid oklch(0.25 0.01 265)",
+                          }}
+                        >
+                          <Button
+                            size="sm"
+                            disabled
+                            className="gap-1.5 text-xs opacity-40 cursor-not-allowed"
+                            data-ocid="result.download_button"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Download Result
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 text-xs border-border hover:bg-accent/20"
+                            data-ocid="result.secondary_button"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            Share
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 text-xs border-border hover:bg-accent/20"
+                            onClick={() =>
+                              setInputText("Apply another style to my content")
+                            }
+                            data-ocid="result.edit_button"
+                          >
+                            <Wand2 className="w-3.5 h-3.5" />
+                            Apply Another Style
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Plain text bubble */}
+                    {msg.content && !msg.progressCard && !msg.resultCard && (
                       <div
                         className="px-4 py-3 rounded-2xl text-sm leading-relaxed"
                         style={{
@@ -874,7 +1413,7 @@ export default function App() {
 
         {/* Input area */}
         <div
-          className="flex-shrink-0 border-t border-border px-4 py-3"
+          className="flex-shrink-0 border-t border-border px-2 md:px-4 py-2 md:py-3"
           style={{ background: "oklch(0.13 0.005 265)" }}
         >
           <div className="max-w-3xl mx-auto">
@@ -963,7 +1502,7 @@ export default function App() {
                   className="p-2 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
                   title="Upload photo"
                 >
-                  <Image className="w-5 h-5" />
+                  <Image className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
                 <button
                   type="button"
@@ -972,7 +1511,7 @@ export default function App() {
                   className="p-2 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
                   title="Upload audio"
                 >
-                  <Music className="w-5 h-5" />
+                  <Music className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
                 <button
                   type="button"
@@ -981,8 +1520,27 @@ export default function App() {
                   className="p-2 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
                   title="Upload video"
                 >
-                  <Film className="w-5 h-5" />
+                  <Film className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
+
+                {/* Movie generate button — only in movie mode */}
+                {movieMode && (
+                  <button
+                    type="button"
+                    data-ocid="input.movie_button"
+                    onClick={() => setMovieDialogOpen(true)}
+                    className="p-2 rounded-xl transition-colors"
+                    title="Generate Movie (MOVIE MODE)"
+                    style={{
+                      background:
+                        "linear-gradient(135deg, oklch(0.48 0.22 300 / 20%), oklch(0.62 0.20 300 / 20%))",
+                      border: "1px solid oklch(0.55 0.22 300 / 50%)",
+                      color: "oklch(0.75 0.18 300)",
+                    }}
+                  >
+                    <Clapperboard className="w-5 h-5" />
+                  </button>
+                )}
               </div>
 
               {/* Text input */}
@@ -991,7 +1549,11 @@ export default function App() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Describe your anime edit..."
+                placeholder={
+                  movieMode
+                    ? "Describe your anime edit or use 🎬 Generate Movie..."
+                    : "Describe your anime edit..."
+                }
                 rows={1}
                 className="flex-1 bg-transparent resize-none outline-none text-sm text-foreground placeholder:text-muted-foreground py-2 px-1 max-h-32"
                 style={{ lineHeight: "1.5" }}
@@ -1009,7 +1571,9 @@ export default function App() {
                     inputText.trim() || pendingAttachments.length > 0
                       ? ogMode
                         ? "linear-gradient(135deg, oklch(0.87 0.17 95), oklch(0.68 0.22 50))"
-                        : "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.44 0.17 254))"
+                        : movieMode
+                          ? "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))"
+                          : "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.44 0.17 254))"
                       : "oklch(0.25 0 0)",
                   color: "white",
                 }}
@@ -1027,7 +1591,7 @@ export default function App() {
 
         {/* Footer */}
         <footer
-          className="text-center py-2 text-xs text-muted-foreground"
+          className="hidden md:block text-center py-2 text-xs text-muted-foreground"
           style={{ background: "oklch(0.13 0.005 265)" }}
         >
           © {new Date().getFullYear()}. Built with love using{" "}
@@ -1071,7 +1635,7 @@ export default function App() {
 
           <div className="space-y-4 mt-2">
             <p className="text-sm text-muted-foreground text-center">
-              Enter the secret OG code to unlock exclusive features
+              Enter a secret code to unlock exclusive features
             </p>
 
             <div className={cheatError ? "shake" : ""}>
@@ -1125,6 +1689,160 @@ export default function App() {
               >
                 <Star className="w-4 h-4" />
                 ACTIVATE
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Movie Generator Dialog ── */}
+      <Dialog open={movieDialogOpen} onOpenChange={setMovieDialogOpen}>
+        <DialogContent
+          className="max-w-md border-border"
+          style={{
+            background: "oklch(0.16 0.015 265)",
+            border: "1px solid oklch(0.55 0.22 300 / 40%)",
+          }}
+          data-ocid="movie.dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="text-center">
+              <div className="flex flex-col items-center gap-3">
+                <div
+                  className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))",
+                    boxShadow: "0 0 24px oklch(0.55 0.22 300 / 40%)",
+                  }}
+                >
+                  🎬
+                </div>
+                <span
+                  className="font-display text-xl font-bold"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, oklch(0.75 0.18 300), oklch(0.85 0.14 320))",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                  }}
+                >
+                  Generate Movie
+                </span>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 mt-2">
+            <p className="text-sm text-muted-foreground text-center">
+              Create a cinematic anime movie — up to 2 hours long
+            </p>
+
+            {/* Style picker */}
+            <div className="space-y-1.5">
+              <label
+                className="text-sm font-medium text-foreground"
+                htmlFor="movie-style-select"
+              >
+                Anime Style
+              </label>
+              <Select value={movieStyle} onValueChange={setMovieStyle}>
+                <SelectTrigger
+                  id="movie-style-select"
+                  className="border-border"
+                  style={{ background: "oklch(0.20 0.02 265)" }}
+                  data-ocid="movie.select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent style={{ background: "oklch(0.18 0.015 265)" }}>
+                  {[...ANIME_PRESETS, ...OG_ANIME_PRESETS].map((p) => (
+                    <SelectItem key={p.id} value={p.name}>
+                      {p.emoji} {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Duration slider */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="movie-duration"
+                  className="text-sm font-medium text-foreground"
+                >
+                  Duration
+                </label>
+                <span
+                  className="text-sm font-bold font-mono"
+                  style={{ color: "oklch(0.75 0.18 300)" }}
+                >
+                  {movieDuration} min
+                </span>
+              </div>
+              <Slider
+                id="movie-duration"
+                data-ocid="movie.toggle"
+                min={1}
+                max={120}
+                step={1}
+                value={[movieDuration]}
+                onValueChange={([v]) => setMovieDuration(v)}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>1 min</span>
+                <span>1 hour</span>
+                <span>2 hours</span>
+              </div>
+            </div>
+
+            {/* Story textarea */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="movie-story"
+                className="text-sm font-medium text-foreground"
+              >
+                Story / Description
+              </label>
+              <Textarea
+                id="movie-story"
+                data-ocid="movie.textarea"
+                value={movieStory}
+                onChange={(e) => setMovieStory(e.target.value)}
+                placeholder="Describe your movie story, characters, scenes..."
+                rows={3}
+                className="border-border resize-none"
+                style={{
+                  background: "oklch(0.20 0.02 265)",
+                  color: "oklch(0.97 0 0)",
+                }}
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                data-ocid="movie.cancel_button"
+                variant="ghost"
+                className="flex-1"
+                onClick={() => setMovieDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                data-ocid="movie.confirm_button"
+                className="flex-1 gap-2 font-bold"
+                onClick={handleMovieGenerate}
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.48 0.22 300), oklch(0.62 0.20 300))",
+                  border: "none",
+                  color: "#fff",
+                }}
+              >
+                <Clapperboard className="w-4 h-4" />
+                Generate Movie
               </Button>
             </div>
           </div>
