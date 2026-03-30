@@ -28,6 +28,8 @@ import {
   Image,
   Menu,
   MessageSquare,
+  Mic,
+  MicOff,
   Music,
   Plus,
   Send,
@@ -66,6 +68,16 @@ interface ResultCard {
   text: string;
 }
 
+interface PictorialCard {
+  type: "pictorial";
+  transcript: string;
+  sceneTitle: string;
+  sceneDescription: string;
+  animeStyle: string;
+  colors: string[];
+  elements: string[];
+}
+
 interface Message {
   id: string;
   role: MessageRole;
@@ -74,6 +86,7 @@ interface Message {
   timestamp: Date;
   progressCard?: ProgressCard;
   resultCard?: ResultCard;
+  pictorialCard?: PictorialCard;
 }
 
 interface ChatSession {
@@ -326,6 +339,7 @@ export default function App() {
   const [movieStyle, setMovieStyle] = useState(ANIME_PRESETS[0].name);
   const [movieDuration, setMovieDuration] = useState(30);
   const [movieStory, setMovieStory] = useState("");
+  const [isListening, setIsListening] = useState<boolean>(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>(
     [],
   );
@@ -363,6 +377,113 @@ export default function App() {
     setPendingAttachments([]);
     setInputText("");
     if (isMobile) setSidebarOpen(false);
+  }
+
+  function generatePictorialScene(transcript: string): PictorialCard {
+    const lower = transcript.toLowerCase();
+    let animeStyle = "MHA Quirk Activation";
+    let colors = ["#32CD32", "#00FF7F", "#1E90FF"];
+    let elements = ["energy burst", "power surge", "hero aura"];
+    if (lower.match(/fire|flame|burn/)) {
+      animeStyle = "Demon Slayer Flame Breathing";
+      colors = ["#FF4500", "#FF8C00", "#FFD700"];
+      elements = ["flame pillars", "fire vortex", "ember sparks"];
+    } else if (lower.match(/water|ocean|rain/)) {
+      animeStyle = "Demon Slayer Water Breathing";
+      colors = ["#00BFFF", "#1E90FF", "#87CEEB"];
+      elements = ["water stream", "tidal wave", "mist veil"];
+    } else if (lower.match(/fight|battle|power|strong/)) {
+      animeStyle = "DBZ Super Saiyan";
+      colors = ["#FFD700", "#FFA500", "#FFFF00"];
+      elements = ["ki blast", "power aura", "lightning charge"];
+    } else if (lower.match(/peace|calm|nature|wind/)) {
+      animeStyle = "Naruto Wind Style";
+      colors = ["#90EE90", "#228B22", "#F0E68C"];
+      elements = ["wind spiral", "leaf dance", "nature flow"];
+    } else if (lower.match(/dark|night|shadow|curse/)) {
+      animeStyle = "JJK Cursed Energy";
+      colors = ["#4B0082", "#8A2BE2", "#191970"];
+      elements = ["cursed aura", "shadow tendrils", "dark vortex"];
+    }
+    const words = transcript.split(" ").slice(0, 3).join(" ");
+    const sceneTitle = `${animeStyle}: ${words.charAt(0).toUpperCase() + words.slice(1)}`;
+    const sceneDescription = `A dynamic anime scene inspired by the words: "${transcript}". The ${animeStyle} technique activates — ${elements.join(", ")} manifest in explosive visual form.`;
+    return {
+      type: "pictorial",
+      transcript,
+      sceneTitle,
+      sceneDescription,
+      animeStyle,
+      colors,
+      elements,
+    };
+  }
+
+  function startSpeechToVisual() {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      const errMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content:
+          "⚠️ Speech recognition is not supported in this browser. Try Chrome or Edge.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errMsg]);
+      return;
+    }
+    if (isListening) {
+      setIsListening(false);
+      return;
+    }
+    setIsListening(true);
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      const card = generatePictorialScene(transcript);
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: `🎤 ${transcript}`,
+        timestamp: new Date(),
+      };
+      const assistantMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "",
+        timestamp: new Date(),
+        pictorialCard: card,
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setIsListening(false);
+    };
+    recognition.onerror = () => {
+      const errMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "⚠️ Could not capture speech. Please try again.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errMsg]);
+      setIsListening(false);
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.start();
+  }
+
+  function handleDownload(text: string) {
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "OG-Funky-Boys-Result.txt";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function handleFileUpload(
@@ -1305,8 +1426,8 @@ export default function App() {
                         >
                           <Button
                             size="sm"
-                            disabled
-                            className="gap-1.5 text-xs opacity-40 cursor-not-allowed"
+                            className="gap-1.5 text-xs"
+                            onClick={() => handleDownload(msg.resultCard!.text)}
                             data-ocid="result.download_button"
                           >
                             <Download className="w-3.5 h-3.5" />
@@ -1337,27 +1458,288 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Plain text bubble */}
-                    {msg.content && !msg.progressCard && !msg.resultCard && (
+                    {/* Pictorial scene card */}
+                    {msg.pictorialCard && (
                       <div
-                        className="px-4 py-3 rounded-2xl text-sm leading-relaxed"
+                        className="w-full max-w-md rounded-2xl overflow-hidden"
                         style={{
-                          background:
-                            msg.role === "user"
-                              ? ogMode
-                                ? "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.87 0.17 95 / 80%))"
-                                : "linear-gradient(135deg, oklch(0.44 0.17 254), oklch(0.68 0.22 50))"
-                              : "oklch(0.18 0.015 265)",
-                          color: "oklch(0.97 0 0)",
-                          borderRadius:
-                            msg.role === "user"
-                              ? "1rem 1rem 0.25rem 1rem"
-                              : "1rem 1rem 1rem 0.25rem",
+                          background: "oklch(0.15 0.02 265)",
+                          border: "1px solid oklch(0.30 0.08 280 / 60%)",
+                          borderRadius: "1rem 1rem 1rem 0.25rem",
                         }}
+                        data-ocid="chat.pictorial_card"
                       >
-                        {formatContent(msg.content)}
+                        <div
+                          className="px-4 py-3 flex items-center gap-2"
+                          style={{
+                            background: `linear-gradient(135deg, ${msg.pictorialCard.colors[0]}33, ${msg.pictorialCard.colors[1]}22)`,
+                            borderBottom:
+                              "1px solid oklch(0.30 0.04 280 / 40%)",
+                          }}
+                        >
+                          <span className="text-lg">🎨</span>
+                          <div>
+                            <div
+                              className="text-xs font-bold"
+                              style={{ color: msg.pictorialCard.colors[0] }}
+                            >
+                              {msg.pictorialCard.animeStyle}
+                            </div>
+                            <div
+                              className="text-sm font-semibold"
+                              style={{ color: "oklch(0.95 0 0)" }}
+                            >
+                              {msg.pictorialCard.sceneTitle}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="p-3">
+                          <svg
+                            role="img"
+                            aria-label="Anime scene visualization"
+                            viewBox="0 0 400 220"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="w-full rounded-xl"
+                            style={{ background: "oklch(0.10 0.02 265)" }}
+                          >
+                            <defs>
+                              <radialGradient
+                                id={`rg1-${msg.id}`}
+                                cx="50%"
+                                cy="50%"
+                                r="50%"
+                              >
+                                <stop
+                                  offset="0%"
+                                  stopColor={msg.pictorialCard.colors[0]}
+                                  stopOpacity="0.8"
+                                />
+                                <stop
+                                  offset="100%"
+                                  stopColor={msg.pictorialCard.colors[0]}
+                                  stopOpacity="0"
+                                />
+                              </radialGradient>
+                              <radialGradient
+                                id={`rg2-${msg.id}`}
+                                cx="30%"
+                                cy="40%"
+                                r="40%"
+                              >
+                                <stop
+                                  offset="0%"
+                                  stopColor={msg.pictorialCard.colors[1]}
+                                  stopOpacity="0.6"
+                                />
+                                <stop
+                                  offset="100%"
+                                  stopColor={msg.pictorialCard.colors[1]}
+                                  stopOpacity="0"
+                                />
+                              </radialGradient>
+                              <radialGradient
+                                id={`rg3-${msg.id}`}
+                                cx="70%"
+                                cy="60%"
+                                r="35%"
+                              >
+                                <stop
+                                  offset="0%"
+                                  stopColor={
+                                    msg.pictorialCard.colors[2] ||
+                                    msg.pictorialCard.colors[0]
+                                  }
+                                  stopOpacity="0.5"
+                                />
+                                <stop
+                                  offset="100%"
+                                  stopColor={
+                                    msg.pictorialCard.colors[2] ||
+                                    msg.pictorialCard.colors[0]
+                                  }
+                                  stopOpacity="0"
+                                />
+                              </radialGradient>
+                            </defs>
+                            <circle
+                              cx="200"
+                              cy="110"
+                              r="100"
+                              fill={`url(#rg1-${msg.id})`}
+                            />
+                            <circle
+                              cx="120"
+                              cy="90"
+                              r="70"
+                              fill={`url(#rg2-${msg.id})`}
+                            />
+                            <circle
+                              cx="280"
+                              cy="130"
+                              r="60"
+                              fill={`url(#rg3-${msg.id})`}
+                            />
+                            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+                              <line
+                                key={i}
+                                x1="200"
+                                y1="110"
+                                x2={200 + 130 * Math.cos((i * Math.PI) / 4)}
+                                y2={110 + 100 * Math.sin((i * Math.PI) / 4)}
+                                stroke={
+                                  msg.pictorialCard!.colors[
+                                    i % msg.pictorialCard!.colors.length
+                                  ]
+                                }
+                                strokeWidth="1.5"
+                                strokeOpacity="0.5"
+                              />
+                            ))}
+                            <polygon
+                              points="200,60 220,100 200,90 180,100"
+                              fill={msg.pictorialCard.colors[0]}
+                              opacity="0.9"
+                            />
+                            <polygon
+                              points="200,160 215,125 200,135 185,125"
+                              fill={msg.pictorialCard.colors[1]}
+                              opacity="0.7"
+                            />
+                            <circle
+                              cx="200"
+                              cy="110"
+                              r="18"
+                              fill="none"
+                              stroke={msg.pictorialCard.colors[0]}
+                              strokeWidth="2.5"
+                              opacity="0.9"
+                            />
+                            <circle
+                              cx="200"
+                              cy="110"
+                              r="35"
+                              fill="none"
+                              stroke={msg.pictorialCard.colors[1]}
+                              strokeWidth="1"
+                              strokeDasharray="4 3"
+                              opacity="0.6"
+                            />
+                            <circle
+                              cx="200"
+                              cy="110"
+                              r="55"
+                              fill="none"
+                              stroke={
+                                msg.pictorialCard.colors[2] ||
+                                msg.pictorialCard.colors[0]
+                              }
+                              strokeWidth="0.5"
+                              strokeDasharray="2 4"
+                              opacity="0.4"
+                            />
+                            {msg.pictorialCard.elements.map((el, i) => (
+                              <text
+                                key={el}
+                                x={50 + i * 110}
+                                y={200}
+                                fontSize="8"
+                                fill={
+                                  msg.pictorialCard!.colors[
+                                    i % msg.pictorialCard!.colors.length
+                                  ]
+                                }
+                                opacity="0.7"
+                                textAnchor="middle"
+                              >
+                                {el}
+                              </text>
+                            ))}
+                          </svg>
+                        </div>
+                        <div
+                          className="px-4 pb-2 text-xs leading-relaxed"
+                          style={{ color: "oklch(0.75 0 0)" }}
+                        >
+                          {msg.pictorialCard.sceneDescription}
+                        </div>
+                        <div
+                          className="px-4 pb-3 text-xs italic"
+                          style={{ color: "oklch(0.55 0 0)" }}
+                        >
+                          🎤 &quot;{msg.pictorialCard.transcript}&quot;
+                        </div>
+                        <div
+                          className="flex items-center gap-2 px-4 py-3"
+                          style={{
+                            borderTop: "1px solid oklch(0.22 0.01 265)",
+                          }}
+                        >
+                          <Button
+                            size="sm"
+                            className="gap-1.5 text-xs"
+                            data-ocid="pictorial.download_button"
+                            onClick={() => {
+                              const svg = document.querySelector(
+                                `[data-ocid="chat.pictorial_card"] svg`,
+                              );
+                              if (svg) {
+                                const blob = new Blob([svg.outerHTML], {
+                                  type: "image/svg+xml",
+                                });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = "anime-scene.svg";
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }
+                            }}
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Download Visual
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 text-xs border-border hover:bg-accent/20"
+                            data-ocid="pictorial.apply_button"
+                            onClick={() =>
+                              setInputText(
+                                `Apply ${msg.pictorialCard!.animeStyle} style to my content`,
+                              )
+                            }
+                          >
+                            <Wand2 className="w-3.5 h-3.5" />
+                            Apply Style
+                          </Button>
+                        </div>
                       </div>
                     )}
+
+                    {/* Plain text bubble */}
+                    {msg.content &&
+                      !msg.progressCard &&
+                      !msg.resultCard &&
+                      !msg.pictorialCard && (
+                        <div
+                          className="px-4 py-3 rounded-2xl text-sm leading-relaxed"
+                          style={{
+                            background:
+                              msg.role === "user"
+                                ? ogMode
+                                  ? "linear-gradient(135deg, oklch(0.68 0.22 50), oklch(0.87 0.17 95 / 80%))"
+                                  : "linear-gradient(135deg, oklch(0.44 0.17 254), oklch(0.68 0.22 50))"
+                                : "oklch(0.18 0.015 265)",
+                            color: "oklch(0.97 0 0)",
+                            borderRadius:
+                              msg.role === "user"
+                                ? "1rem 1rem 0.25rem 1rem"
+                                : "1rem 1rem 1rem 0.25rem",
+                          }}
+                        >
+                          {formatContent(msg.content)}
+                        </div>
+                      )}
 
                     <span className="text-xs text-muted-foreground px-1">
                       {msg.timestamp.toLocaleTimeString([], {
@@ -1521,6 +1903,25 @@ export default function App() {
                   title="Upload video"
                 >
                   <Film className="w-4 h-4 md:w-5 md:h-5" />
+                </button>
+
+                {/* Mic button for speech-to-visual */}
+                <button
+                  type="button"
+                  data-ocid="input.mic_button"
+                  onClick={startSpeechToVisual}
+                  className={`p-2 rounded-xl transition-colors ${isListening ? "text-red-400 bg-red-500/20 animate-pulse" : "text-muted-foreground hover:text-foreground hover:bg-accent/20"}`}
+                  title={
+                    isListening
+                      ? "Listening... (click to stop)"
+                      : "Speak to generate anime visual"
+                  }
+                >
+                  {isListening ? (
+                    <MicOff className="w-4 h-4 md:w-5 md:h-5" />
+                  ) : (
+                    <Mic className="w-4 h-4 md:w-5 md:h-5" />
+                  )}
                 </button>
 
                 {/* Movie generate button — only in movie mode */}
