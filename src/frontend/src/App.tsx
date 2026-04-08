@@ -477,13 +477,67 @@ export default function App() {
   }
 
   function handleDownload(text: string) {
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "OG-Funky-Boys-Result.txt";
-    a.click();
-    URL.revokeObjectURL(url);
+    const canvas = document.createElement("canvas");
+    const padding = 40;
+    const lineHeight = 24;
+    const fontSize = 16;
+    const brandFontSize = 22;
+    const maxWidth = 760;
+    canvas.width = 840;
+
+    // Measure lines first to set canvas height
+    const ctx = canvas.getContext("2d")!;
+    ctx.font = `${fontSize}px monospace`;
+    const words = text.split(" ");
+    const lines: string[] = [];
+    let currentLine = "";
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+
+    canvas.height =
+      padding * 3 + brandFontSize + 16 + lines.length * lineHeight;
+
+    // Draw background
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw gold header bar
+    ctx.fillStyle = "#2a2a4e";
+    ctx.fillRect(0, 0, canvas.width, padding * 2 + brandFontSize);
+
+    // Branding text
+    ctx.font = `bold ${brandFontSize}px sans-serif`;
+    ctx.fillStyle = "#ffd700";
+    ctx.fillText("OG Funky Boys AI", padding, padding + brandFontSize);
+
+    // Content text
+    ctx.font = `${fontSize}px monospace`;
+    ctx.fillStyle = "#e0e0e0";
+    lines.forEach((line, i) => {
+      ctx.fillText(
+        line,
+        padding,
+        padding * 2 + brandFontSize + 16 + i * lineHeight,
+      );
+    });
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "OG-Funky-Boys-Result.png";
+      a.click();
+      URL.revokeObjectURL(url);
+    }, "image/png");
   }
 
   function handleFileUpload(
@@ -1236,7 +1290,7 @@ export default function App() {
 
                   {/* Bubble */}
                   <div
-                    className={`max-w-[85%] md:max-w-[75%] space-y-2 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}
+                    className={`max-w-[85%] md:max-w-[75%] min-w-0 space-y-2 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}
                   >
                     {/* Attachments */}
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -1250,13 +1304,13 @@ export default function App() {
                               <img
                                 src={att.url}
                                 alt={att.name}
-                                className="max-w-[200px] max-h-[150px] object-cover"
+                                className="max-w-[min(200px,40vw)] max-h-[150px] object-cover"
                               />
                             )}
                             {att.type === "video" && (
                               <video
                                 src={att.url}
-                                className="max-w-[200px] max-h-[150px]"
+                                className="max-w-[min(200px,40vw)] max-h-[150px]"
                                 controls
                               >
                                 <track kind="captions" />
@@ -1287,7 +1341,7 @@ export default function App() {
                     {/* Progress card */}
                     {msg.progressCard && (
                       <div
-                        className="w-80 rounded-2xl p-4 space-y-3"
+                        className="w-full max-w-xs sm:w-80 rounded-2xl p-4 space-y-3"
                         style={{
                           background: msg.progressCard.isMovie
                             ? "linear-gradient(135deg, oklch(0.18 0.03 300), oklch(0.20 0.02 265))"
@@ -1413,7 +1467,7 @@ export default function App() {
                           </span>
                         </div>
                         <div
-                          className="px-4 py-3 text-sm leading-relaxed"
+                          className="px-4 py-3 text-sm leading-relaxed break-words"
                           style={{ color: "oklch(0.97 0 0)" }}
                         >
                           {formatContent(msg.resultCard.text)}
@@ -1468,6 +1522,7 @@ export default function App() {
                           borderRadius: "1rem 1rem 1rem 0.25rem",
                         }}
                         data-ocid="chat.pictorial_card"
+                        data-msg-id={msg.id}
                       >
                         <div
                           className="px-4 py-3 flex items-center gap-2"
@@ -1680,18 +1735,32 @@ export default function App() {
                             data-ocid="pictorial.download_button"
                             onClick={() => {
                               const svg = document.querySelector(
-                                `[data-ocid="chat.pictorial_card"] svg`,
+                                `[data-ocid="chat.pictorial_card" data-msg-id={msg.id}] svg`,
                               );
                               if (svg) {
-                                const blob = new Blob([svg.outerHTML], {
-                                  type: "image/svg+xml",
-                                });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = "anime-scene.svg";
-                                a.click();
-                                URL.revokeObjectURL(url);
+                                const svgEl = svg as SVGSVGElement;
+                                const w = svgEl.width?.baseVal?.value || 400;
+                                const h = svgEl.height?.baseVal?.value || 400;
+                                const svgData = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgEl.outerHTML)}`;
+                                const img = new window.Image();
+                                img.onload = () => {
+                                  const canvas =
+                                    document.createElement("canvas");
+                                  canvas.width = w;
+                                  canvas.height = h;
+                                  const ctx = canvas.getContext("2d")!;
+                                  ctx.drawImage(img, 0, 0);
+                                  canvas.toBlob((blob) => {
+                                    if (!blob) return;
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement("a");
+                                    a.href = url;
+                                    a.download = "anime-scene.png";
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                  }, "image/png");
+                                };
+                                img.src = svgData;
                               }
                             }}
                           >
@@ -1722,7 +1791,7 @@ export default function App() {
                       !msg.resultCard &&
                       !msg.pictorialCard && (
                         <div
-                          className="px-4 py-3 rounded-2xl text-sm leading-relaxed"
+                          className="px-4 py-3 rounded-2xl text-sm leading-relaxed break-words overflow-hidden"
                           style={{
                             background:
                               msg.role === "user"
@@ -1854,7 +1923,7 @@ export default function App() {
               style={{ background: "oklch(0.17 0.01 265)" }}
             >
               {/* Upload buttons */}
-              <div className="flex gap-1 pb-0.5">
+              <div className="flex gap-0.5 sm:gap-1 pb-0.5 flex-shrink-0">
                 <input
                   ref={imageInputRef}
                   type="file"
@@ -1881,7 +1950,7 @@ export default function App() {
                   type="button"
                   data-ocid="input.upload_button"
                   onClick={() => imageInputRef.current?.click()}
-                  className="p-2 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
+                  className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
                   title="Upload photo"
                 >
                   <Image className="w-4 h-4 md:w-5 md:h-5" />
@@ -1890,7 +1959,7 @@ export default function App() {
                   type="button"
                   data-ocid="input.audio_upload_button"
                   onClick={() => audioInputRef.current?.click()}
-                  className="p-2 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
+                  className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
                   title="Upload audio"
                 >
                   <Music className="w-4 h-4 md:w-5 md:h-5" />
@@ -1899,7 +1968,7 @@ export default function App() {
                   type="button"
                   data-ocid="input.video_upload_button"
                   onClick={() => videoInputRef.current?.click()}
-                  className="p-2 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
+                  className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/20"
                   title="Upload video"
                 >
                   <Film className="w-4 h-4 md:w-5 md:h-5" />
@@ -1910,7 +1979,7 @@ export default function App() {
                   type="button"
                   data-ocid="input.mic_button"
                   onClick={startSpeechToVisual}
-                  className={`p-2 rounded-xl transition-colors ${isListening ? "text-red-400 bg-red-500/20 animate-pulse" : "text-muted-foreground hover:text-foreground hover:bg-accent/20"}`}
+                  className={`p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors ${isListening ? "text-red-400 bg-red-500/20 animate-pulse" : "text-muted-foreground hover:text-foreground hover:bg-accent/20"}`}
                   title={
                     isListening
                       ? "Listening... (click to stop)"
@@ -1966,7 +2035,7 @@ export default function App() {
                 data-ocid="chat.submit_button"
                 onClick={handleSend}
                 disabled={!inputText.trim() && pendingAttachments.length === 0}
-                className="p-2.5 rounded-xl transition-all disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+                className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-all disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
                 style={{
                   background:
                     inputText.trim() || pendingAttachments.length > 0
